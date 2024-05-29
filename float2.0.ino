@@ -286,7 +286,8 @@ void handleDescent()
         surface = true;
         break;
       }
-    } 
+    }
+    bottom = false;
   }
   softSerial.println("Float is at the surface. Ready to Transmit.");
 }
