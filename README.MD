@@ -1,0 +1,2 @@
+This time I separate the one function code to modulated version with each function handling their respective task.
+For more accuracy while descending and ascending, I also added a timer in case, the pressure might not be distinct enough to distinguish between being back at the surface or being at the bottom. We may lose data when this happens so just in case, I added two checking points when to ascend, descend and transmit data. In this way, since the process will not be solely dependent on the pressure sensor, we don't have to worry about the float not coming back.
