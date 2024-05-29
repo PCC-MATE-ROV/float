@@ -60,7 +60,7 @@ void loop()
     if (softSerial.available()) {
       char val = softSerial.read();
       if (val == 'D' && !descend && !ascend) {
-        softSerial.println("Float's first descent...");
+        softSerial.println("Float's descent...");
         handleDescent();
       } else if (val == 'T' && ascend) {
         handleAscent();
@@ -226,6 +226,7 @@ void readDataFromEEPROM()
 
 void handleDescent()
 {
+  descend = true;
   theaterChase(strip.Color(255,0,0),50);
   digitalWrite(pump, LOW);
   digitalWrite(valve, LOW);
@@ -239,7 +240,7 @@ void handleDescent()
 
   softSerial.println("Writing data while the float is descending");
 
-  while (true) 
+  while (descend) 
   {
     datapoints_counter++;
     delay(1000); //1 second delay for data collection
@@ -260,6 +261,7 @@ void handleDescent()
       break;
     }
   }
+  descend = false;
   if(bottom)
   {
     ascendStartTime = millis();
@@ -287,7 +289,12 @@ void handleDescent()
         break;
       }
     }
+    ascend = false;
     bottom = false;
+  }
+  if(surface)
+  {
+    digitalWrite(pump, LOW);
   }
   softSerial.println("Float is at the surface. Ready to Transmit.");
 }
@@ -300,17 +307,18 @@ void handleAscent()
   readDataFromEEPROM();
   transmit = true;
 
-  if (transmit) {
+  if (transmit) 
+  {
     softSerial.println("Clearing the entire EEPROM. This will take a few moments");
-    for (addr_EEPROM = 0; addr_EEPROM < 1024; addr_EEPROM++) {
+    for (addr_EEPROM = 0; addr_EEPROM < 1024; addr_EEPROM++) 
+    {
       eeprom.eeprom_write(addr_EEPROM, 0);
       if (addr_EEPROM % 100 == 0) softSerial.print(".");
     }
     softSerial.println("Memory Erase Complete");
-    written = false;
-    ascend = false;
     softSerial.println("Finished sending data. Ready to Descend Again. Press D to Descend.");
   }
+  transmit = false;
 }
 
 void theaterChase(uint32_t c, uint8_t wait) {
