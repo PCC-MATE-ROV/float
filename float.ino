@@ -281,8 +281,8 @@ void loop()
               softSerial.println(" Float's preparing to ascend...");
               digitalWrite(pump, HIGH);  // Turn the pump off
               digitalWrite(valve, HIGH);
-              delay(9000);
-              digitalWrite(pump, LOW); // Turn the valve off
+              //delay(9000);
+              //digitalWrite(pump, LOW); // Turn the valve off
               ascend = true;
               colorWipe(strip.Color(0, 0, 255), 50); // Blue)
             }
