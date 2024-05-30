@@ -20,6 +20,9 @@ const int baudRate = 9600;
 const int sensorreadDelay = 250;
 const int pump = 5;
 const int valve = 6;
+int f_size = 4; // float has four bytes
+int i_size = 1;
+int year_size = 2;
 
 bool start = false;
 bool descend = false;
@@ -62,8 +65,9 @@ void loop()
       if (val == 'D' && !descend && !ascend) {
         softSerial.println("Float's descent...");
         handleDescent();
-      } else if (val == 'T' && ascend) {
+      } else if (val == 'T' && surface) {
         handleAscent();
+        datapoints_counter = 0;
       }
     }
   } else {
@@ -138,27 +142,29 @@ void logDataToEEPROM() {
   outer_pressure = (analog_pressure - pressureZero) * (pressuretransducermaxPSI / (pressureMax - pressureZero));
   outer_pressure = (outer_pressure * 6.89476) + pressure;
 
-  eeprom.eeprom_write(addr_EEPROM, month);
-  addr_EEPROM += sizeof(month);
-  eeprom.eeprom_write(addr_EEPROM, day);
-  addr_EEPROM += sizeof(day);
-  eeprom.eeprom_write(addr_EEPROM, year);
-  addr_EEPROM += sizeof(year);
-  eeprom.eeprom_write(addr_EEPROM, hour);
-  addr_EEPROM += sizeof(hour);
-  eeprom.eeprom_write(addr_EEPROM, minute);
-  addr_EEPROM += sizeof(minute);
-  eeprom.eeprom_write(addr_EEPROM, second);
-  addr_EEPROM += sizeof(second);
+ eeprom.eeprom_write(addr_EEPROM, month);
+            addr_EEPROM += i_size;
+            eeprom.eeprom_write(addr_EEPROM, day);
+            addr_EEPROM += i_size;
+            eeprom.eeprom_write(addr_EEPROM, year);
+            addr_EEPROM += year_size;
+            eeprom.eeprom_write(addr_EEPROM, hour);
+            addr_EEPROM += i_size;
+            eeprom.eeprom_write(addr_EEPROM, minute);
+            addr_EEPROM += i_size;
+            eeprom.eeprom_write(addr_EEPROM, second);
+            addr_EEPROM += i_size;
 
-  eeprom.eeprom_write(addr_EEPROM, temperature);
-  addr_EEPROM += sizeof(temperature);
-  eeprom.eeprom_write(addr_EEPROM, pressure);
-  addr_EEPROM += sizeof(pressure);
-  eeprom.eeprom_write(addr_EEPROM, humidity);
-  addr_EEPROM += sizeof(humidity);
-  eeprom.eeprom_write(addr_EEPROM, outer_pressure);
-  addr_EEPROM += sizeof(outer_pressure);
+            eeprom.eeprom_write(addr_EEPROM, temperature);
+            addr_EEPROM += f_size;
+            eeprom.eeprom_write(addr_EEPROM, pressure);
+            addr_EEPROM += f_size;
+            eeprom.eeprom_write(addr_EEPROM, humidity);
+            addr_EEPROM += f_size;
+            // eeprom.eeprom_write(addr_EEPROM, compensated_RH); addr_EEPROM += f_size;
+            // eeprom.eeprom_write(addr_EEPROM, dew_point); addr_EEPROM += f_size;
+            eeprom.eeprom_write(addr_EEPROM, outer_pressure);
+            addr_EEPROM += f_size;
 }
 
 void readDataFromEEPROM()
@@ -169,27 +175,29 @@ void readDataFromEEPROM()
 
   for(int i = 0; i < datapoints_counter; i++)
   {
-    eeprom.eeprom_write(addr_EEPROM, &read_month);
-    addr_EEPROM += sizeof(month);
-    eeprom.eeprom_write(addr_EEPROM, &read_day);
-    addr_EEPROM += sizeof(day);
-    eeprom.eeprom_write(addr_EEPROM, &read_year);
-    addr_EEPROM += sizeof(year);
-    eeprom.eeprom_write(addr_EEPROM, &read_hour);
-    addr_EEPROM += sizeof(hour);
-    eeprom.eeprom_write(addr_EEPROM, &read_minute);
-    addr_EEPROM += sizeof(minute);
-    eeprom.eeprom_write(addr_EEPROM, &read_second);
-    addr_EEPROM += sizeof(second);
+    eeprom.eeprom_read(addr_EEPROM, &read_month);
+            addr_EEPROM += i_size;
+            eeprom.eeprom_read(addr_EEPROM, &read_day);
+            addr_EEPROM += i_size;
+            eeprom.eeprom_read(addr_EEPROM, &read_year);
+            addr_EEPROM += year_size;
+            eeprom.eeprom_read(addr_EEPROM, &read_hour);
+            addr_EEPROM += i_size;
+            eeprom.eeprom_read(addr_EEPROM, &read_minute);
+            addr_EEPROM += i_size;
+            eeprom.eeprom_read(addr_EEPROM, &read_second);
+            addr_EEPROM += i_size;
 
-    eeprom.eeprom_write(addr_EEPROM, &read_temperature);
-    addr_EEPROM += sizeof(temperature);
-    eeprom.eeprom_write(addr_EEPROM, &read_pressure);
-    addr_EEPROM += sizeof(pressure);
-    eeprom.eeprom_write(addr_EEPROM, &read_humidity);
-    addr_EEPROM += sizeof(humidity);
-    eeprom.eeprom_write(addr_EEPROM, &read_outer_pressure);
-    addr_EEPROM += sizeof(outer_pressure);
+            eeprom.eeprom_read(addr_EEPROM, &read_temperature);
+            addr_EEPROM += f_size;
+            eeprom.eeprom_read(addr_EEPROM, &read_pressure);
+            addr_EEPROM += f_size;
+            eeprom.eeprom_read(addr_EEPROM, &read_humidity);
+            addr_EEPROM += f_size;
+            // eeprom.eeprom_read(addr_EEPROM, &read_compensated_RH);  addr_EEPROM += f_size;
+            // eeprom.eeprom_read(addr_EEPROM, &read_dew_point);  addr_EEPROM += f_size;
+            eeprom.eeprom_read(addr_EEPROM, &read_outer_pressure);
+            addr_EEPROM += f_size;
 
     softSerial.print("Date: ");
     softSerial.print(read_month);
@@ -268,6 +276,8 @@ void handleDescent()
     softSerial.println("Reached the bottom...");
     digitalWrite(pump, HIGH);
     digitalWrite(valve, HIGH);
+    theaterChase(strip.Color(0,0,255),50);
+
     ascend = true;
     while(ascend)
     {
@@ -282,7 +292,7 @@ void handleDescent()
         break;
       }
 
-      if (abs(outer_pressure - previous_outer_pressure) <= 1.0) 
+      if ((millis() - ascendStartTime > 20000) && abs(outer_pressure - previous_outer_pressure) <= 1.0) 
       {
         softSerial.println("Detected minimal pressure change. Assuming the float has reached the bottom.");
         surface = true;
@@ -297,12 +307,13 @@ void handleDescent()
     digitalWrite(pump, LOW);
   }
   softSerial.println("Float is at the surface. Ready to Transmit.");
+  theaterChase(strip.Color(0, 255, 0), 50);
+
 }
 
 void handleAscent() 
 {
   softSerial.println("Data Transmitting:");
-  theaterChase(strip.Color(0, 255, 0), 50);
   addr_EEPROM = 0;
   readDataFromEEPROM();
   transmit = true;
