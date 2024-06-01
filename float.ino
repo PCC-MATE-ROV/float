@@ -1,36 +1,28 @@
-// #include <Wire.h>
+#include <Wire.h>
 #include "Arduino.h"
-// #include "uRTCLib.h"
 #include <RTClib.h>
 #include "uEEPROMLib.h"
-
-#include <SparkFun_PHT_MS8607_Arduino_Library.h> // Click here to get the library: http://librarymanager/All#SparkFun_PHT_MS8607
-
+#include <SparkFun_PHT_MS8607_Arduino_Library.h>
 #include <AltSoftSerial.h>
-
-#include "Wire.h" //allows communication over i2c devices
-// #include "LiquidCrystal_I2C.h" //allows interfacing with LCD screens
-
 #include <Adafruit_NeoPixel.h>
+
 #ifdef __AVR__
 #include <avr/power.h>
 #endif
 
 #define LED_PIN 11
-#define BUTTON_PIN 4
-bool button_pressed = false;
 
-const int pressureInput = A3;            // select the analog input pin for the pressure transducer
-float pressureZero = 90.5;                // analog reading of pressure transducer at 0psi
-float pressureMax = 920.7;                 // analog reading of pressure transducer at 30psi
-const int pressuretransducermaxPSI = 30; // psi value of transducer being used
-const int baudRate = 9600;               // constant integer to set the baud rate for serial monitor
-const int sensorreadDelay = 250;         // constant integer to set the sensor read delay in milliseconds
-
-// Pump & valve pin numbers
-// Change value  s according to available pins on the circuit
+const int pressureInput = A3;
+float pressureZero = 90.5;
+float pressureMax = 920.7;
+const int pressuretransducermaxPSI = 30;
+const int baudRate = 9600;
+const int sensorreadDelay = 250;
 const int pump = 5;
 const int valve = 6;
+int f_size = 4; // float has four bytes
+int i_size = 1;
+int year_size = 2;
 
 bool start = false;
 bool descend = false;
@@ -38,109 +30,88 @@ bool ascend = false;
 bool written = false;
 bool bottom = false;
 bool transmit = false;
+bool surface = false;
 
-// float pressureValue = 0; //variable to store the value coming from the pressure transducer
 AltSoftSerial softSerial;
 MS8607 barometricSensor;
-
-// uRTCLib rtc(0x68);      // Create objects and assign module I2c Addresses
 RTC_DS3231 rtc;
 uEEPROMLib eeprom(0x57);
-int val = 0;
+
 float init_pressure;
+int datapoints_counter = 0;
 unsigned int addr_EEPROM;
-uint8_t month;
-uint8_t day;
+uint8_t month, day, hour, minute, second;
 uint16_t year;
-uint8_t hour;
-uint8_t minute;
-uint8_t second;
+float temperature, humidity, pressure, outer_pressure = 0, analog_pressure = 0;
 
-float temperature;
-float humidity;
-float pressure;
-// float compensated_RH;
-// float dew_point;
-float outer_pressure = 0;
-float analog_pressure =0;
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(10, LED_PIN, NEO_GRB + NEO_KHZ800);
 
-uint8_t read_month;
-uint8_t read_day;
-uint16_t read_year;
-uint8_t read_hour;
-uint8_t read_minute;
-uint8_t read_second;
-float read_humidity;
-// float read_compensated_RH;
-// float read_dew_point;
-float read_temperature;
-float read_pressure;
-float read_outer_pressure = 0; // Stores the value of external pressure
+void theaterChase(uint32_t c, uint8_t wait); // function for how the light should display c = color, wait= time between intervals
+void initializeComponents();                 // booting up the float
+void logDataToEEPROM();                      // write data to the eeprom
+void readDataFromEEPROM();                   // read the data to transmit
+void handleDescent();
+void handleAscent();
 
-Adafruit_NeoPixel strip = Adafruit_NeoPixel(19, LED_PIN, NEO_GRB + NEO_KHZ800);
-
-void colorWipe(uint32_t c, uint8_t wait)
+void setup()
 {
-  for (uint16_t i = 0; i < strip.numPixels(); i++)
-  {
-    strip.setPixelColor(i, c);
-    strip.show();
-    delay(wait);
-  }
+  initializeComponents();
 }
-void theaterChase(uint32_t c, uint8_t wait)
+
+void loop()
 {
-  for (int j = 0; j < 10; j++)
-  { // do 10 cycles of chasing
-    for (int q = 0; q < 3; q++)
+  if (start)
+  {
+    if (softSerial.available())
     {
-      for (int i = 0; i < strip.numPixels(); i = i + 3)
+      char val = softSerial.read();
+      if (val == 'D' && !descend && !ascend)
       {
-        strip.setPixelColor(i + q, c); // turn every third pixel on
+        softSerial.println("Float's descent...");
+        handleDescent();
       }
-      strip.show();
-
-      delay(wait);
-
-      for (int i = 0; i < strip.numPixels(); i = i + 3)
+      else if (val == 'T' && surface)
       {
-        strip.setPixelColor(i + q, 0); // turn every third pixel off
+        handleAscent();
+        datapoints_counter = 0;
       }
     }
   }
+  else
+  {
+    softSerial.println("Start failed..");
+  }
 }
 
-void setup(void)
+void initializeComponents()
 {
-
   Wire.begin();
   rtc.begin();
+  Serial.begin(baudRate);
+  softSerial.begin(baudRate);
+  strip.begin();
+  strip.show();
+
+#if defined(__AVR_ATtiny85__)
+  if (F_CPU == 16000000)
+    clock_prescale_set(clock_div_1);
+#endif
+
+  // set the clock the same of the laptop
   rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-
-  Serial.begin(9600); // Set serial baud rate to 9600
-
-  softSerial.begin(9600);
-
-  softSerial.println(" Qwiic PHT Sensor MS8607 Example");
-
-  // if barometer could not be opened
-  if (barometricSensor.begin() == false)
+  // error handling for Barometric meter
+  if (!barometricSensor.begin())
   {
-    softSerial.println("MS8607 sensor did not respond. Trying again...");
-    if (barometricSensor.begin() == false)
-    {
-      softSerial.println("MS8607 sensor did not respond. Please check wiring.");
-      while (1)
-        ;
-    }
+    softSerial.println("MS8607 sensor did not respond. Please check wiring.");
+    while (1)
+      ;
   }
 
-  int err = barometricSensor.set_humidity_resolution(MS8607_humidity_resolution_12b); // 12 bits
+  int err = barometricSensor.set_humidity_resolution(MS8607_humidity_resolution_12b);
   if (err != MS8607_status_ok)
   {
     softSerial.print("Problem setting the MS8607 sensor humidity resolution. Error code = ");
     softSerial.println(err);
-    softSerial.println("Freezing.");
     while (1)
       ;
   }
@@ -150,237 +121,250 @@ void setup(void)
   {
     softSerial.print("Problem disabling the MS8607 humidity sensor heater. Error code = ");
     softSerial.println(err);
-    softSerial.println("Freezing.");
     while (1)
       ;
   }
 
-// This is for Trinket 5V 16MHz, you can remove these three lines if you are not using a Trinket
-#if defined(__AVR_ATtiny85__)
-  if (F_CPU == 16000000)
-    clock_prescale_set(clock_div_1);
-#endif
-  // End of trinket special code
-
-  strip.begin();
-  strip.show(); // Initialize all pixels to 'off'
-
-  // for the float to stay above water before
-  init_pressure = barometricSensor.getPressure() / 10; // assume to be pressure above water divide by 10 to covert hpa to kpa
-
-  // softSerial.println(pressureZero);
-  // softSerial.println(pressureMax);
+  // set the pinModes so that the air pump can do its thing
   pinMode(pump, OUTPUT);
   pinMode(valve, OUTPUT);
-  // Serial.println(init_pressure);
-  softSerial.println("Program has started. The float will stay above water before the rover moves it into position.");
-  colorWipe(strip.Color(0, 255, 0), 50); // Green
-  digitalWrite(pump, HIGH);              // Turn the pump on
-  digitalWrite(valve, HIGH);             // Turn the valve on
-  start = true;
+
+  // visible feedback from the float that the float is working as it should
+  theaterChase(strip.Color(0, 255, 0), 50); // green
+  digitalWrite(pump, HIGH);
+  digitalWrite(valve, HIGH);
+  softSerial.println("Please wait 10s while the bladder is being filled.");
+
   delay(9000);
-  digitalWrite(pump,LOW); // Wait 1 second
+  digitalWrite(pump, LOW);
+  start = true;
+  softSerial.println("Program has started. The float will stay above water before the rover moves it into position.");
 }
 
-void loop()
+void logDataToEEPROM()
 {
-  if (start)
+  DateTime now = rtc.now();
+  month = now.month();
+  day = now.day();
+  year = now.year();
+  hour = now.hour();
+  minute = now.minute();
+  second = now.second();
+  temperature = barometricSensor.getTemperature();
+  pressure = barometricSensor.getPressure() / 10;
+  humidity = barometricSensor.getHumidity();
+  analog_pressure = analogRead(pressureInput);
+  outer_pressure = (analog_pressure - pressureZero) * (pressuretransducermaxPSI / (pressureMax - pressureZero));
+  outer_pressure = (outer_pressure * 6.89476) + pressure;
+
+  eeprom.eeprom_write(addr_EEPROM, month);
+  addr_EEPROM += i_size;
+  eeprom.eeprom_write(addr_EEPROM, day);
+  addr_EEPROM += i_size;
+  eeprom.eeprom_write(addr_EEPROM, year);
+  addr_EEPROM += year_size;
+  eeprom.eeprom_write(addr_EEPROM, hour);
+  addr_EEPROM += i_size;
+  eeprom.eeprom_write(addr_EEPROM, minute);
+  addr_EEPROM += i_size;
+  eeprom.eeprom_write(addr_EEPROM, second);
+  addr_EEPROM += i_size;
+
+  eeprom.eeprom_write(addr_EEPROM, temperature);
+  addr_EEPROM += f_size;
+  eeprom.eeprom_write(addr_EEPROM, pressure);
+  addr_EEPROM += f_size;
+  eeprom.eeprom_write(addr_EEPROM, humidity);
+  addr_EEPROM += f_size;
+  // eeprom.eeprom_write(addr_EEPROM, compensated_RH); addr_EEPROM += f_size;
+  // eeprom.eeprom_write(addr_EEPROM, dew_point); addr_EEPROM += f_size;
+  eeprom.eeprom_write(addr_EEPROM, outer_pressure);
+  addr_EEPROM += f_size;
+}
+
+void readDataFromEEPROM()
+{
+  uint8_t read_month, read_day, read_hour, read_minute, read_second;
+  uint16_t read_year;
+  float read_temperature, read_pressure, read_humidity, read_outer_pressure;
+
+  for (int i = 0; i < datapoints_counter; i++)
   {
-    float previous_outer_pressure;
-    // Ascend = A, Descend = D
-    val = softSerial.read(); // the command the float will receive from the PC
-    int counter = 0;
-    // softSerial.println("Writing data");
-    // bool currentState = digitalRead(BUTTON_PIN);
-    if (val != -1)
+    eeprom.eeprom_read(addr_EEPROM, &read_month);
+    addr_EEPROM += i_size;
+    eeprom.eeprom_read(addr_EEPROM, &read_day);
+    addr_EEPROM += i_size;
+    eeprom.eeprom_read(addr_EEPROM, &read_year);
+    addr_EEPROM += year_size;
+    eeprom.eeprom_read(addr_EEPROM, &read_hour);
+    addr_EEPROM += i_size;
+    eeprom.eeprom_read(addr_EEPROM, &read_minute);
+    addr_EEPROM += i_size;
+    eeprom.eeprom_read(addr_EEPROM, &read_second);
+    addr_EEPROM += i_size;
+
+    eeprom.eeprom_read(addr_EEPROM, &read_temperature);
+    addr_EEPROM += f_size;
+    eeprom.eeprom_read(addr_EEPROM, &read_pressure);
+    addr_EEPROM += f_size;
+    eeprom.eeprom_read(addr_EEPROM, &read_humidity);
+    addr_EEPROM += f_size;
+    // eeprom.eeprom_read(addr_EEPROM, &read_compensated_RH);  addr_EEPROM += f_size;
+    // eeprom.eeprom_read(addr_EEPROM, &read_dew_point);  addr_EEPROM += f_size;
+    eeprom.eeprom_read(addr_EEPROM, &read_outer_pressure);
+    addr_EEPROM += f_size;
+
+    softSerial.print("Date: ");
+    softSerial.print(read_month);
+    softSerial.print('/');
+    softSerial.print(read_day);
+    softSerial.print('/');
+    softSerial.print(read_year);
+
+    softSerial.print("  Time: ");
+    softSerial.print(read_hour);
+    softSerial.print(':');
+    softSerial.print(read_minute);
+    softSerial.print(':');
+    softSerial.print(read_second);
+    softSerial.print(" ");
+
+    softSerial.print("Temperature= ");
+    softSerial.print(read_temperature);
+    softSerial.print("C, ");
+
+    softSerial.print("Inner Pressure= ");
+    softSerial.print(read_pressure);
+    softSerial.print(" kPa, ");
+
+    softSerial.print("Humidity= ");
+    softSerial.print(read_humidity);
+    softSerial.print("%RH, ");
+
+    softSerial.print("Outer Pressure= ");
+    softSerial.print(read_outer_pressure);
+    softSerial.println(" kpa");
+  }
+}
+
+void handleDescent()
+{
+  descend = true;
+  theaterChase(strip.Color(255, 0, 0), 50);
+  digitalWrite(pump, LOW);
+  digitalWrite(valve, LOW);
+
+  addr_EEPROM = 0;
+  float previous_outer_pressure;
+  unsigned long ascendStartTime;
+  unsigned long maxAscendTime = 40000;
+  unsigned long descentStartTime = millis();
+  unsigned long maxDescentTime = 40000; // 40 seconds (adjust based on expected max descent time)
+
+  softSerial.println("Writing data while the float is descending");
+
+  while (descend)
+  {
+    datapoints_counter++;
+    delay(1000); // 1 second delay for data collection
+    previous_outer_pressure = outer_pressure;
+    logDataToEEPROM();
+
+    if (millis() - descentStartTime > maxDescentTime)
     {
-      if (val == 'D')
+      softSerial.println("Reached maximum descent time. Assuming the float has reached the bottom.");
+      bottom = true;
+      break;
+    }
+
+    if (abs(outer_pressure - previous_outer_pressure) <= 1.0)
+    {
+      softSerial.println("Detected minimal pressure change. Assuming the float has reached the bottom.");
+      bottom = true;
+      break;
+    }
+  }
+  descend = false;
+  if (bottom)
+  {
+    ascendStartTime = millis();
+    softSerial.println("Reached the bottom...");
+    digitalWrite(pump, HIGH);
+    digitalWrite(valve, HIGH);
+    theaterChase(strip.Color(0, 0, 255), 50);
+
+    ascend = true;
+    while (ascend)
+    {
+      datapoints_counter++;
+      delay(1000); // 1 second delay for data collection for now
+      previous_outer_pressure = outer_pressure;
+      logDataToEEPROM();
+      if (millis() - ascendStartTime > maxAscendTime)
       {
-        softSerial.println("   Float's first descent...");
-        colorWipe(strip.Color(255, 0, 0), 50); // RED
-        digitalWrite(pump, LOW);               // Turn the pump off
-        digitalWrite(valve, LOW);              // Turn the valve off
-        delay(1000);                           // Wait 1 second
+        softSerial.println("Reached maximum ascent time. Assuming the float has reached the surface.");
+        surface = true;
+        break;
+      }
 
-        addr_EEPROM = 0;
+      if ((millis() - ascendStartTime > 20000) && abs(outer_pressure - previous_outer_pressure) <= 1.0)
+      {
+        softSerial.println("Detected minimal pressure change. Assuming the float has reached the bottom.");
+        surface = true;
+        break;
+      }
+    }
+    ascend = false;
+    bottom = false;
+  }
+  if (surface)
+  {
+    digitalWrite(pump, LOW);
+  }
+  softSerial.println("Float is at the surface. Ready to Transmit.");
+  theaterChase(strip.Color(0, 255, 0), 50);
+}
 
-        // size of the data
-        int f_size = 4; // float has four bytes
-        int i_size = 1;
-        int year_size = 2;
-        bool done = false;
-        descend = true;
+void handleAscent()
+{
+  softSerial.println("Data Transmitting:");
+  addr_EEPROM = 0;
+  readDataFromEEPROM();
+  transmit = true;
 
-        if (descend)
-        {
-          softSerial.println("Writing data while the float is decending");
-          do
-          {
-            counter++;   // this counter will count how many times the collected data
-            delay(1000); // will be 5000 for the finalize code
-            softSerial.println("inside do while loop now");
-            previous_outer_pressure = outer_pressure;
-            DateTime now = rtc.now();
-            month = now.month();
-            day = now.day();
-            year = now.year(); // returns uint_16t
-            hour = now.hour();
-            minute = now.minute();
-            second = now.second();
-            temperature = barometricSensor.getTemperature();
-            pressure = barometricSensor.getPressure() / 10; // the sensor give pressure in hpa so we divide by 10 to get kpa
-            humidity = barometricSensor.getHumidity();
-            analog_pressure = analogRead(pressureInput);
-            //float voltage = analog_pressure *(5.0/1023.0);
+  if (transmit)
+  {
+    softSerial.println("Clearing the entire EEPROM. This will take a few moments");
+    for (addr_EEPROM = 0; addr_EEPROM < 1024; addr_EEPROM++)
+    {
+      eeprom.eeprom_write(addr_EEPROM, 0);
+      if (addr_EEPROM % 100 == 0)
+        softSerial.print(".");
+    }
+    softSerial.println("Memory Erase Complete");
+    softSerial.println("Finished sending data. Ready to Descend Again. Press D to Descend.");
+  }
+  transmit = false;
+}
 
+void theaterChase(uint32_t c, uint8_t wait)
+{
+  for (int j = 0; j < 10; j++)
+  { // do 10 cycles of chasing
+    for (int q = 0; q < 3; q++)
+    {
+      for (uint16_t i = 0; i < strip.numPixels(); i = i + 3)
+      {
+        strip.setPixelColor(i + q, c); // turn every third pixel on
+      }
+      strip.show();
 
-            outer_pressure = (analog_pressure - pressureZero) * (pressuretransducermaxPSI / (pressureMax - pressureZero));
-            outer_pressure = (outer_pressure * 6.89476) + pressure; // converting unit from PSI to Kpa
+      delay(wait);
 
-            eeprom.eeprom_write(addr_EEPROM, month);
-            addr_EEPROM += i_size;
-            eeprom.eeprom_write(addr_EEPROM, day);
-            addr_EEPROM += i_size;
-            eeprom.eeprom_write(addr_EEPROM, year);
-            addr_EEPROM += year_size;
-            eeprom.eeprom_write(addr_EEPROM, hour);
-            addr_EEPROM += i_size;
-            eeprom.eeprom_write(addr_EEPROM, minute);
-            addr_EEPROM += i_size;
-            eeprom.eeprom_write(addr_EEPROM, second);
-            addr_EEPROM += i_size;
-
-            eeprom.eeprom_write(addr_EEPROM, temperature);
-            addr_EEPROM += f_size;
-            eeprom.eeprom_write(addr_EEPROM, pressure);
-            addr_EEPROM += f_size;
-            eeprom.eeprom_write(addr_EEPROM, humidity);
-            addr_EEPROM += f_size;
-            // eeprom.eeprom_write(addr_EEPROM, compensated_RH); addr_EEPROM += f_size;
-            // eeprom.eeprom_write(addr_EEPROM, dew_point); addr_EEPROM += f_size;
-            eeprom.eeprom_write(addr_EEPROM, outer_pressure);
-            addr_EEPROM += f_size;
-
-            softSerial.print("Analog Pressure= ");
-            softSerial.print(analogRead(pressureInput));
-            softSerial.println(" Kpa");
-            softSerial.print("Outer Pressure= ");
-            softSerial.print(outer_pressure);
-            softSerial.println(" Kpa");
-
-            softSerial.print("init Pressure= ");
-            softSerial.print(init_pressure);
-             softSerial.print("inside Pressure= ");
-            softSerial.print(pressure);
-            softSerial.println(" Kpa");
-            if (abs(outer_pressure - previous_outer_pressure) <= 1.0)
-            {
-              written = true;
-              bottom = true;
-              softSerial.println("Reached the bottom...");
-              softSerial.println(" Float's preparing to ascend...");
-              digitalWrite(pump, HIGH);  // Turn the pump off
-              digitalWrite(valve, HIGH);
-              //delay(9000);
-              //digitalWrite(pump, LOW); // Turn the valve off
-              ascend = true;
-              colorWipe(strip.Color(0, 0, 255), 50); // Blue)
-            }
-          } while (outer_pressure - init_pressure <= 0.5); // this condition makes the float to collect data until it is above water
-          descend = false;
-          bottom = false;
-          softSerial.println("outside do while loop now");
-        }
-
-        if ((outer_pressure - init_pressure <= 0.5 || outer_pressure >= init_pressure) && ascend && written && !descend && !bottom) // this means it is above water, we can transmit data
-        {
-          // reset eeprom
-          addr_EEPROM = 0;
-          softSerial.println(" Data Transmiting: ");
-          colorWipe(strip.Color(0, 255, 0), 50); // green
-          for (int i = 0; i < counter; i++)
-          {
-            eeprom.eeprom_read(addr_EEPROM, &read_month);
-            addr_EEPROM += i_size;
-            eeprom.eeprom_read(addr_EEPROM, &read_day);
-            addr_EEPROM += i_size;
-            eeprom.eeprom_read(addr_EEPROM, &read_year);
-            addr_EEPROM += year_size;
-            eeprom.eeprom_read(addr_EEPROM, &read_hour);
-            addr_EEPROM += i_size;
-            eeprom.eeprom_read(addr_EEPROM, &read_minute);
-            addr_EEPROM += i_size;
-            eeprom.eeprom_read(addr_EEPROM, &read_second);
-            addr_EEPROM += i_size;
-
-            eeprom.eeprom_read(addr_EEPROM, &read_temperature);
-            addr_EEPROM += f_size;
-            eeprom.eeprom_read(addr_EEPROM, &read_pressure);
-            addr_EEPROM += f_size;
-            eeprom.eeprom_read(addr_EEPROM, &read_humidity);
-            addr_EEPROM += f_size;
-            // eeprom.eeprom_read(addr_EEPROM, &read_compensated_RH);  addr_EEPROM += f_size;
-            // eeprom.eeprom_read(addr_EEPROM, &read_dew_point);  addr_EEPROM += f_size;
-            eeprom.eeprom_read(addr_EEPROM, &read_outer_pressure);
-            addr_EEPROM += f_size;
-
-            softSerial.print("Date: ");
-            softSerial.print(read_month);
-            softSerial.print('/');
-            softSerial.print(read_day);
-            softSerial.print('/');
-            softSerial.print(read_year);
-
-            softSerial.print("  Time: ");
-            softSerial.print(read_hour);
-            softSerial.print(':');
-            softSerial.print(read_minute);
-            softSerial.print(':');
-            softSerial.print(read_second);
-            softSerial.print(" ");
-
-            softSerial.print("Temperature= ");
-            softSerial.print(read_temperature);
-            softSerial.print("C, ");
-
-            softSerial.print("Pressure= ");
-            // pressure *= 0.1; // pressure reads in hPa, 1hPa = 0.1kPa
-            softSerial.print(read_pressure);
-            softSerial.print("kPa, ");
-
-            softSerial.print("Humidity= ");
-            softSerial.print(read_humidity);
-            softSerial.print("%RH, ");
-
-            softSerial.print("Outer Pressure= ");
-            softSerial.print(read_outer_pressure);
-            softSerial.println(" Kpa");
-
-            transmit = true;
-          }
-
-          if (ascend && transmit)
-          {
-            softSerial.println("Clearing the entire EEPROM.  This will take a few moments");
-            for (addr_EEPROM = 0; addr_EEPROM < counter; addr_EEPROM++)
-            {
-              eeprom.eeprom_write(addr_EEPROM, (unsigned char)(0));
-              if (int i = addr_EEPROM % 100 == 0)
-                softSerial.print("."); // Prints a '.' every 100 writes to EEPROM
-            }
-            softSerial.println();
-            softSerial.println("Memory Erase Complete");
-            written = false;
-            ascend = false;
-            // while (1); //Stops further execution of the program
-            softSerial.println("Finished sending data. Ready to Decend Again.");
-            softSerial.println("Finished sending data. Ready to Decend Again. Press D to Descend.");
-            val = -1;
-          }
-        }
+      for (uint16_t i = 0; i < strip.numPixels(); i = i + 2)
+      {
+        strip.setPixelColor(i + q, 0); // turn every second pixel off
       }
     }
   }
-  else
-    softSerial.println(" Start failed..");
 }
